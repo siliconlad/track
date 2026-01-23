@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Example of multi-process logging using MultiProcessLogger.
+"""Example of async logging with multiple processes.
 
-This example demonstrates how to use MultiProcessLogger to safely log
-from multiple processes using a queue-based architecture.
-
-The MultiProcessLogger creates a dedicated writer process that handles
-all file I/O, while worker processes send log records through a queue.
+This example demonstrates how to use AsyncLogger with multiple processes.
+When use_process=True, the logger uses a dedicated writer process with
+a multiprocessing.Queue, making it safe for multi-process applications.
 """
 
 import multiprocessing as mp
@@ -13,13 +11,13 @@ import time
 
 import numpy as np
 
-from track import MultiProcessLogger
+from track import AsyncLogger
 
 
-def worker(logger: MultiProcessLogger, worker_id: int, num_iterations: int) -> None:
+def worker(logger: AsyncLogger, worker_id: int, num_iterations: int) -> None:
     """Worker function that runs in a separate process."""
     for i in range(num_iterations):
-        # Log messages
+        # Log calls return immediately (non-blocking)
         logger.info(f"Process {worker_id}: iteration {i}")
 
         if i % 10 == 0:
@@ -50,8 +48,8 @@ def main():
 
     print(f"Starting {num_processes} processes, {iterations_per_process} iterations each")
 
-    # Create logger in main process
-    with MultiProcessLogger(output_file, name="multiprocess") as logger:
+    # Use use_process=True for multi-process safety
+    with AsyncLogger(output_file, name="multiprocess", use_process=True) as logger:
         # Add metadata
         logger.add_metadata(
             "experiment",
@@ -80,6 +78,9 @@ def main():
 
         elapsed = time.time() - start_time
         logger.info(f"All processes completed in {elapsed:.2f}s")
+
+        # Give background writer time to flush
+        time.sleep(0.5)
 
     print(f"Logged to: {output_file}")
     print(f"Elapsed time: {elapsed:.2f}s")
