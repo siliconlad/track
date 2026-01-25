@@ -14,6 +14,16 @@ import numpy as np
 from track import AsyncLogger
 
 
+def generate_pointcloud(n_points: int = 100) -> np.ndarray:
+    """Generate a sample point cloud."""
+    dtype = np.dtype([("x", "f4"), ("y", "f4"), ("z", "f4")])
+    points = np.zeros(n_points, dtype=dtype)
+    points["x"] = np.random.randn(n_points)
+    points["y"] = np.random.randn(n_points)
+    points["z"] = np.random.randn(n_points)
+    return points
+
+
 def worker(logger: AsyncLogger, worker_id: int, num_iterations: int) -> None:
     """Worker function that logs messages from a thread."""
     for i in range(num_iterations):
@@ -28,7 +38,7 @@ def worker(logger: AsyncLogger, worker_id: int, num_iterations: int) -> None:
 
         # Occasionally log a point cloud
         if i % 25 == 0:
-            points = np.random.randn(100, 3).astype(np.float32)
+            points = generate_pointcloud(100)
             logger.log_pointcloud(
                 f"worker_{worker_id}/features",
                 points,

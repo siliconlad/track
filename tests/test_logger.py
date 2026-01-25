@@ -1,8 +1,5 @@
 """Tests for the Logger class."""
 
-import io
-import json
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -44,75 +41,15 @@ class TestLogger:
         # Create a minimal PNG (1x1 red pixel)
         png_data = bytes(
             [
-                0x89,
-                0x50,
-                0x4E,
-                0x47,
-                0x0D,
-                0x0A,
-                0x1A,
-                0x0A,  # PNG signature
-                0x00,
-                0x00,
-                0x00,
-                0x0D,
-                0x49,
-                0x48,
-                0x44,
-                0x52,  # IHDR chunk
-                0x00,
-                0x00,
-                0x00,
-                0x01,
-                0x00,
-                0x00,
-                0x00,
-                0x01,
-                0x08,
-                0x02,
-                0x00,
-                0x00,
-                0x00,
-                0x90,
-                0x77,
-                0x53,
-                0xDE,
-                0x00,
-                0x00,
-                0x00,
-                0x0C,
-                0x49,
-                0x44,
-                0x41,
-                0x54,  # IDAT chunk
-                0x08,
-                0xD7,
-                0x63,
-                0xF8,
-                0xCF,
-                0xC0,
-                0x00,
-                0x00,
-                0x00,
-                0x03,
-                0x00,
-                0x01,
-                0x00,
-                0x05,
-                0x6D,
-                0xC5,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x49,
-                0x45,
-                0x4E,
-                0x44,  # IEND chunk
-                0xAE,
-                0x42,
-                0x60,
-                0x82,
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,  # PNG signature
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,  # IHDR chunk
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+                0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+                0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,  # IDAT chunk
+                0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0x6D,
+                0xC5, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+                0x44, 0xAE, 0x42, 0x60, 0x82,  # IEND chunk
             ]
         )
 
@@ -121,11 +58,30 @@ class TestLogger:
 
         assert output_file.exists()
 
-    def test_log_pointcloud(self, tmp_path: Path) -> None:
-        """Test logging a point cloud."""
+    def test_log_image_array(self, tmp_path: Path) -> None:
+        """Test logging an image from numpy array."""
+        pytest.importorskip("PIL")
         output_file = tmp_path / "test.mcap"
 
-        points = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+        # Create a simple RGB image
+        image = np.zeros((64, 64, 3), dtype=np.uint8)
+        image[:, :, 0] = 255  # Red channel
+
+        with Logger(output_file) as logger:
+            logger.log_image("test_image", image, format="png")
+
+        assert output_file.exists()
+
+    def test_log_pointcloud(self, tmp_path: Path) -> None:
+        """Test logging a point cloud with structured array."""
+        output_file = tmp_path / "test.mcap"
+
+        # Create structured array with XYZ
+        dtype = np.dtype([("x", "f4"), ("y", "f4"), ("z", "f4")])
+        points = np.zeros(3, dtype=dtype)
+        points["x"] = [0.0, 1.0, 0.0]
+        points["y"] = [0.0, 0.0, 1.0]
+        points["z"] = [0.0, 0.0, 0.0]
 
         with Logger(output_file) as logger:
             logger.log_pointcloud("test_pc", points)
@@ -136,23 +92,41 @@ class TestLogger:
         """Test logging a point cloud with colors."""
         output_file = tmp_path / "test.mcap"
 
-        points = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
-        colors = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]], dtype=np.uint8)
+        # Create structured array with XYZ and RGB
+        dtype = np.dtype([
+            ("x", "f4"), ("y", "f4"), ("z", "f4"),
+            ("r", "u1"), ("g", "u1"), ("b", "u1"),
+        ])
+        points = np.zeros(3, dtype=dtype)
+        points["x"] = [0.0, 1.0, 0.0]
+        points["y"] = [0.0, 0.0, 1.0]
+        points["z"] = [0.0, 0.0, 0.0]
+        points["r"] = [255, 0, 0]
+        points["g"] = [0, 255, 0]
+        points["b"] = [0, 0, 255]
 
         with Logger(output_file) as logger:
-            logger.log_pointcloud("test_pc", points, colors=colors)
+            logger.log_pointcloud("test_pc", points)
 
         assert output_file.exists()
 
-    def test_log_pointcloud_with_intensities(self, tmp_path: Path) -> None:
-        """Test logging a point cloud with intensities."""
+    def test_log_pointcloud_with_intensity(self, tmp_path: Path) -> None:
+        """Test logging a point cloud with intensity."""
         output_file = tmp_path / "test.mcap"
 
-        points = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
-        intensities = np.array([0.5, 0.8, 1.0], dtype=np.float32)
+        # Create structured array with XYZ and intensity
+        dtype = np.dtype([
+            ("x", "f4"), ("y", "f4"), ("z", "f4"),
+            ("intensity", "f4"),
+        ])
+        points = np.zeros(3, dtype=dtype)
+        points["x"] = [0.0, 1.0, 0.0]
+        points["y"] = [0.0, 0.0, 1.0]
+        points["z"] = [0.0, 0.0, 0.0]
+        points["intensity"] = [0.5, 0.8, 1.0]
 
         with Logger(output_file) as logger:
-            logger.log_pointcloud("test_pc", points, intensities=intensities)
+            logger.log_pointcloud("test_pc", points)
 
         assert output_file.exists()
 
@@ -174,30 +148,21 @@ class TestLogger:
 
         assert output_file.exists()
 
-    def test_file_object_output(self, tmp_path: Path) -> None:
-        """Test writing to a file object."""
+    def test_invalid_pointcloud_not_structured(self, tmp_path: Path) -> None:
+        """Test that non-structured arrays raise errors."""
         output_file = tmp_path / "test.mcap"
 
-        with open(output_file, "wb") as f:
-            with Logger(f) as logger:
-                logger.info("Test message")
-
-        assert output_file.exists()
-        assert output_file.stat().st_size > 0
-
-    def test_invalid_pointcloud_shape(self, tmp_path: Path) -> None:
-        """Test that invalid point cloud shapes raise errors."""
-        output_file = tmp_path / "test.mcap"
-
-        points = np.array([1.0, 2.0, 3.0])  # 1D array, should be Nx3
+        # Regular array, not structured
+        points = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32)
 
         with Logger(output_file) as logger:
-            with pytest.raises(ValueError, match="must be Nx3"):
+            with pytest.raises(ValueError, match="structured array"):
                 logger.log_pointcloud("test_pc", points)
 
-    def test_not_open_error(self) -> None:
+    def test_not_open_error(self, tmp_path: Path) -> None:
         """Test that operations on a closed logger raise errors."""
-        logger = Logger(io.BytesIO())
+        output_file = tmp_path / "test.mcap"
+        logger = Logger(output_file)
 
         with pytest.raises(RuntimeError, match="not open"):
             logger.info("Test")
@@ -217,7 +182,7 @@ class TestLogLevel:
     """Tests for LogLevel enum."""
 
     def test_log_level_values(self) -> None:
-        """Test that log level values match Foxglove spec."""
+        """Test that log level values are correct."""
         assert LogLevel.UNKNOWN == 0
         assert LogLevel.DEBUG == 1
         assert LogLevel.INFO == 2

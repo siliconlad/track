@@ -14,6 +14,22 @@ import numpy as np
 from track import AsyncLogger
 
 
+def generate_pointcloud(n_points: int = 50) -> np.ndarray:
+    """Generate a sample point cloud with colors."""
+    dtype = np.dtype([
+        ("x", "f4"), ("y", "f4"), ("z", "f4"),
+        ("r", "u1"), ("g", "u1"), ("b", "u1"),
+    ])
+    points = np.zeros(n_points, dtype=dtype)
+    points["x"] = np.random.randn(n_points)
+    points["y"] = np.random.randn(n_points)
+    points["z"] = np.random.randn(n_points)
+    points["r"] = np.random.randint(0, 255, n_points)
+    points["g"] = np.random.randint(0, 255, n_points)
+    points["b"] = np.random.randint(0, 255, n_points)
+    return points
+
+
 def worker(logger: AsyncLogger, worker_id: int, num_iterations: int) -> None:
     """Worker function that runs in a separate process."""
     for i in range(num_iterations):
@@ -28,12 +44,10 @@ def worker(logger: AsyncLogger, worker_id: int, num_iterations: int) -> None:
 
         # Log some data periodically
         if i % 20 == 0:
-            points = np.random.randn(50, 3).astype(np.float32)
-            colors = np.random.randint(0, 255, (50, 3), dtype=np.uint8)
+            points = generate_pointcloud(50)
             logger.log_pointcloud(
                 f"process_{worker_id}/data",
                 points,
-                colors=colors,
                 frame_id="world",
             )
 

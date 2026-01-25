@@ -4,7 +4,7 @@
 This example demonstrates how to use the Logger to track:
 - Text logs with different severity levels
 - Images (both raw bytes and numpy arrays)
-- Point clouds with optional colors and intensities
+- Point clouds with flexible field definitions
 
 The output MCAP file can be visualized in Foxglove Studio.
 """
@@ -14,26 +14,30 @@ import numpy as np
 from track import Logger
 
 
-def generate_sample_pointcloud(n_points: int = 1000) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def generate_sample_pointcloud(n_points: int = 1000) -> np.ndarray:
     """Generate a sample point cloud (sphere with random colors)."""
+    # Define structured dtype with XYZ and RGB
+    dtype = np.dtype([
+        ("x", "f4"), ("y", "f4"), ("z", "f4"),
+        ("r", "u1"), ("g", "u1"), ("b", "u1"),
+    ])
+    points = np.zeros(n_points, dtype=dtype)
+
     # Generate points on a sphere
     theta = np.random.uniform(0, 2 * np.pi, n_points)
     phi = np.random.uniform(0, np.pi, n_points)
     r = np.random.uniform(0.8, 1.2, n_points)
 
-    x = r * np.sin(phi) * np.cos(theta)
-    y = r * np.sin(phi) * np.sin(theta)
-    z = r * np.cos(phi)
-
-    points = np.column_stack([x, y, z]).astype(np.float32)
+    points["x"] = r * np.sin(phi) * np.cos(theta)
+    points["y"] = r * np.sin(phi) * np.sin(theta)
+    points["z"] = r * np.cos(phi)
 
     # Generate random colors
-    colors = np.random.randint(0, 255, (n_points, 3), dtype=np.uint8)
+    points["r"] = np.random.randint(0, 255, n_points)
+    points["g"] = np.random.randint(0, 255, n_points)
+    points["b"] = np.random.randint(0, 255, n_points)
 
-    # Generate intensities based on height
-    intensities = ((z + 1) / 2 * 100).astype(np.float32)
-
-    return points, colors, intensities
+    return points
 
 
 def generate_sample_image(width: int = 256, height: int = 256) -> np.ndarray:
@@ -77,20 +81,18 @@ def main():
             logger.info(f"Epoch {epoch + 1}/3 started")
 
             # Generate and log a sample point cloud
-            points, colors, intensities = generate_sample_pointcloud(500)
+            points = generate_sample_pointcloud(500)
             logger.log_pointcloud(
                 topic="training/features",
                 points=points,
-                colors=colors,
-                intensities=intensities,
                 frame_id="model_space",
             )
 
             # Generate and log a sample image
             image = generate_sample_image()
-            logger.log_image_array(
+            logger.log_image(
                 topic="training/activations",
-                array=image,
+                image=image,
                 format="png",
                 frame_id="image",
             )

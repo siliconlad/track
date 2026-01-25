@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "track"
 version = "0.1.0"
-description = "ML experiment tracking library built on mcap"
+description = "ML experiment tracking library built on pybag-sdk"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "mcap>=1.0.0",
+    "pybag-sdk>=0.10.0",
     "numpy>=1.20.0",
 ]
 

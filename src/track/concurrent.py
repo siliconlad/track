@@ -3,7 +3,6 @@
 This module provides non-blocking, async logging utilities:
 
 - AsyncLogger: Queue-based logger with background writer (works for threads and processes)
-- merge_mcap_files: Utility to merge multiple MCAP files
 
 ## AsyncLogger Architecture
 
@@ -23,6 +22,7 @@ import atexit
 import multiprocessing as mp
 import queue
 import threading
+import time
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -30,7 +30,12 @@ from typing import Any
 
 import numpy as np
 
-from track.logger import Logger, LogLevel, _time_ns
+from track.logger import Logger, LogLevel
+
+
+def _time_ns() -> int:
+    """Get current time in nanoseconds."""
+    return time.time_ns()
 
 
 class RecordType(Enum):
@@ -38,7 +43,6 @@ class RecordType(Enum):
 
     LOG = auto()
     IMAGE = auto()
-    IMAGE_ARRAY = auto()
     POINTCLOUD = auto()
     METADATA = auto()
     ATTACHMENT = auto()
@@ -56,52 +60,21 @@ class LogRecord:
 
 def _process_record(logger: Logger, record: LogRecord) -> None:
     """Process a single log record."""
-    import json
-
-    from track.logger import _ns_to_timestamp
-
     data = record.data
 
     if record.record_type == RecordType.LOG:
-        logger._ensure_open()
-        assert logger._writer is not None
-
-        channel_id = logger._get_log_channel()
-        ts = record.timestamp_ns
-
-        log_msg = {
-            "timestamp": _ns_to_timestamp(ts),
-            "level": data["level"],
-            "message": data["message"],
-            "name": data["name"],
-        }
-        if data.get("file"):
-            log_msg["file"] = data["file"]
-        if data.get("line"):
-            log_msg["line"] = data["line"]
-
-        msg_data = json.dumps(log_msg).encode("utf-8")
-        logger._writer.add_message(
-            channel_id=channel_id,
-            log_time=ts,
-            publish_time=ts,
-            data=msg_data,
-            sequence=logger._next_sequence(channel_id),
+        logger._log(
+            LogLevel(data["level"]),
+            data["message"],
+            timestamp_ns=record.timestamp_ns,
+            file=data.get("file", ""),
+            line=data.get("line", 0),
         )
 
     elif record.record_type == RecordType.IMAGE:
         logger.log_image(
             topic=data["topic"],
-            data=data["data"],
-            format=data["format"],
-            frame_id=data["frame_id"],
-            timestamp_ns=record.timestamp_ns,
-        )
-
-    elif record.record_type == RecordType.IMAGE_ARRAY:
-        logger.log_image_array(
-            topic=data["topic"],
-            array=data["array"],
+            image=data["image"],
             format=data["format"],
             frame_id=data["frame_id"],
             timestamp_ns=record.timestamp_ns,
@@ -111,11 +84,7 @@ def _process_record(logger: Logger, record: LogRecord) -> None:
         logger.log_pointcloud(
             topic=data["topic"],
             points=data["points"],
-            colors=data.get("colors"),
-            intensities=data.get("intensities"),
             frame_id=data["frame_id"],
-            position=data["position"],
-            orientation=data["orientation"],
             timestamp_ns=record.timestamp_ns,
         )
 
@@ -249,7 +218,7 @@ class AsyncLogger:
         *,
         name: str = "track",
         chunk_size: int = 1024 * 1024,
-        compression: str = "zstd",
+        compression: str = "lz4",
         queue_size: int = 10000,
         use_process: bool = False,
     ) -> None:
@@ -389,7 +358,7 @@ class AsyncLogger:
 
             print("Warning: Log queue full, dropping record", file=sys.stderr)
 
-    def _get_caller_info(self) -> tuple[str | None, int | None]:
+    def _get_caller_info(self) -> tuple[str, int]:
         """Get the file and line number of the caller."""
         import inspect
 
@@ -402,7 +371,7 @@ class AsyncLogger:
                 return frame.f_code.co_filename, frame.f_lineno
         finally:
             del frame
-        return None, None
+        return "", 0
 
     def _log(
         self,
@@ -410,8 +379,8 @@ class AsyncLogger:
         message: str,
         *,
         timestamp_ns: int | None = None,
-        file: str | None = None,
-        line: int | None = None,
+        file: str = "",
+        line: int = 0,
     ) -> None:
         """Internal log method."""
         ts = timestamp_ns if timestamp_ns is not None else _time_ns()
@@ -456,43 +425,30 @@ class AsyncLogger:
     def log_image(
         self,
         topic: str,
-        data: bytes,
+        image: bytes | np.ndarray,
         *,
         format: str = "png",
         frame_id: str = "",
         timestamp_ns: int | None = None,
     ) -> None:
-        """Log a compressed image (non-blocking)."""
+        """Log an image (non-blocking).
+
+        Args:
+            topic: Topic name for the image.
+            image: Image data - either compressed bytes or numpy array.
+            format: Image format ('png', 'jpeg', or 'webp').
+            frame_id: Frame of reference for the image.
+            timestamp_ns: Optional timestamp in nanoseconds.
+        """
         ts = timestamp_ns if timestamp_ns is not None else _time_ns()
+        # Copy array to avoid issues with shared memory
+        image_data = image.copy() if isinstance(image, np.ndarray) else image
         record = LogRecord(
             RecordType.IMAGE,
             ts,
             {
                 "topic": topic,
-                "data": data,
-                "format": format,
-                "frame_id": frame_id,
-            },
-        )
-        self._put_record(record)
-
-    def log_image_array(
-        self,
-        topic: str,
-        array: np.ndarray,
-        *,
-        format: str = "png",
-        frame_id: str = "",
-        timestamp_ns: int | None = None,
-    ) -> None:
-        """Log an image from numpy array (non-blocking)."""
-        ts = timestamp_ns if timestamp_ns is not None else _time_ns()
-        record = LogRecord(
-            RecordType.IMAGE_ARRAY,
-            ts,
-            {
-                "topic": topic,
-                "array": array.copy(),
+                "image": image_data,
                 "format": format,
                 "frame_id": frame_id,
             },
@@ -504,14 +460,17 @@ class AsyncLogger:
         topic: str,
         points: np.ndarray,
         *,
-        colors: np.ndarray | None = None,
-        intensities: np.ndarray | None = None,
         frame_id: str = "world",
-        position: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        orientation: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0),
         timestamp_ns: int | None = None,
     ) -> None:
-        """Log a point cloud (non-blocking)."""
+        """Log a point cloud (non-blocking).
+
+        Args:
+            topic: Topic name for the point cloud.
+            points: Point cloud as numpy structured array.
+            frame_id: Frame of reference.
+            timestamp_ns: Optional timestamp in nanoseconds.
+        """
         ts = timestamp_ns if timestamp_ns is not None else _time_ns()
         record = LogRecord(
             RecordType.POINTCLOUD,
@@ -519,11 +478,7 @@ class AsyncLogger:
             {
                 "topic": topic,
                 "points": points.copy(),
-                "colors": colors.copy() if colors is not None else None,
-                "intensities": intensities.copy() if intensities is not None else None,
                 "frame_id": frame_id,
-                "position": position,
-                "orientation": orientation,
             },
         )
         self._put_record(record)
@@ -553,101 +508,3 @@ class AsyncLogger:
             },
         )
         self._put_record(record)
-
-
-def merge_mcap_files(
-    input_paths: list[str | Path],
-    output_path: str | Path,
-    *,
-    sort_by_time: bool = True,
-) -> None:
-    """Merge multiple MCAP files into a single file.
-
-    This is useful for combining logs from parallel processing
-    where each worker wrote to its own file.
-
-    Args:
-        input_paths: List of input MCAP file paths.
-        output_path: Output file path for merged result.
-        sort_by_time: Whether to sort messages by timestamp.
-
-    Example:
-        >>> merge_mcap_files(
-        ...     ["worker0.mcap", "worker1.mcap", "worker2.mcap"],
-        ...     "combined.mcap"
-        ... )
-    """
-    from mcap.reader import make_reader
-    from mcap.writer import Writer
-
-    messages: list[tuple[int, int, bytes, str, str]] = []
-    schemas: dict[str, tuple[str, bytes]] = {}
-    channels: dict[str, tuple[str, str]] = {}
-
-    for input_path in input_paths:
-        with open(input_path, "rb") as f:
-            reader = make_reader(f)
-            summary = reader.get_summary()
-
-            if summary is not None:
-                for schema_id, schema in summary.schemas.items():
-                    if schema.name not in schemas:
-                        schemas[schema.name] = (schema.encoding, schema.data)
-
-                for channel_id, channel in summary.channels.items():
-                    schema_name = ""
-                    if channel.schema_id in summary.schemas:
-                        schema_name = summary.schemas[channel.schema_id].name
-                    if channel.topic not in channels:
-                        channels[channel.topic] = (channel.message_encoding, schema_name)
-
-            for schema, channel, message in reader.iter_messages():
-                schema_name = schema.name if schema else ""
-                messages.append(
-                    (
-                        message.log_time,
-                        message.publish_time,
-                        message.data,
-                        channel.topic,
-                        schema_name,
-                    )
-                )
-
-    if sort_by_time:
-        messages.sort(key=lambda x: x[0])
-
-    with open(output_path, "wb") as f:
-        writer = Writer(f)
-        writer.start(profile="", library="track-merge")
-
-        schema_ids: dict[str, int] = {}
-        for name, (encoding, data) in schemas.items():
-            schema_ids[name] = writer.register_schema(name=name, encoding=encoding, data=data)
-
-        channel_ids: dict[str, int] = {}
-        for topic, (msg_encoding, schema_name) in channels.items():
-            schema_id = schema_ids.get(schema_name, 0)
-            channel_ids[topic] = writer.register_channel(
-                topic=topic,
-                message_encoding=msg_encoding,
-                schema_id=schema_id,
-            )
-
-        sequence_counters: dict[int, int] = {}
-        for log_time, publish_time, data, topic, _ in messages:
-            channel_id = channel_ids.get(topic)
-            if channel_id is None:
-                continue
-
-            seq = sequence_counters.get(channel_id, 0)
-            sequence_counters[channel_id] = seq + 1
-
-            writer.add_message(
-                channel_id=channel_id,
-                log_time=log_time,
-                publish_time=publish_time,
-                data=data,
-                sequence=seq,
-            )
-
-        writer.finish()
