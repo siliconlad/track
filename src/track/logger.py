@@ -3,42 +3,51 @@
 from __future__ import annotations
 
 import io
+import os
 import time
+import inspect
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-from typing import IO, Any
+from typing import Any
 
 import numpy as np
+from PIL import Image
+import pybag.types as t
 from pybag.mcap_writer import McapFileWriter
 from pybag.ros2.humble import builtin_interfaces, sensor_msgs, std_msgs
-import pybag.types as t
 
 
 class LogLevel(IntEnum):
-    """Log severity levels."""
-
-    UNKNOWN = 0
-    DEBUG = 1
-    INFO = 2
-    WARNING = 3
-    ERROR = 4
-    FATAL = 5
+    DEBUG = 10
+    INFO = 20
+    WARNING = 30
+    ERROR = 40
+    FATAL = 50
 
 
-# Custom Log message type (similar to rcl_interfaces/Log)
+# TODO: Use the rcl_interfaces message in pybag when added
 @dataclass(kw_only=True)
 class Log:
-    """Log message for ML experiment tracking."""
-
-    __msg_name__ = "track/msg/Log"
+    __msg_name__ = "rcl_interfaces/msg/Log"
 
     stamp: builtin_interfaces.Time
+    """Timestamp associated with the log message."""
+
     level: t.uint8
+    """Logging level."""
+
     name: t.string
+    """Name of logger that this message came from."""
+
     msg: t.string
+    """Full log message."""
+
     file: t.string
+    """File the log message came from."""
+
     line: t.uint32
+    """Line number in the file the log message came from."""
 
 
 # Dtype to PointField datatype mapping
@@ -54,7 +63,7 @@ DTYPE_TO_POINTFIELD: dict[np.dtype, int] = {
 }
 
 
-def _time_ns() -> int:
+def _now_ns() -> int:
     """Get current time in nanoseconds."""
     return time.time_ns()
 
@@ -76,39 +85,28 @@ def _make_header(timestamp_ns: int, frame_id: str = "") -> std_msgs.Header:
 
 
 class Logger:
-    """ML Experiment Logger for tracking logs, images, and point clouds.
-
-    This logger writes data to MCAP files using ROS2 message types,
-    allowing visualization in Foxglove Studio and other compatible tools.
+    """Logger for tracking logs, images, and point clouds.
 
     Example:
         >>> with Logger("experiment.mcap") as logger:
         ...     logger.info("Starting training")
         ...     logger.log_image("input", image_bytes, format="png")
-        ...     logger.warning("Learning rate might be too high")
+        ...     logger.log_cloud("input", pointcloud, frame_id="lidar")
     """
 
     def __init__(
         self,
-        output: str | Path,
-        *,
-        name: str = "track",
-        chunk_size: int = 1024 * 1024,
-        compression: str = "lz4",
+        name: str,
+        output_dir: str | Path | None = None,
     ) -> None:
         """Initialize the logger.
 
         Args:
-            output: Output file path.
             name: Logger name (included in log messages).
-            chunk_size: Size of data chunks in bytes.
-            compression: Compression type ('zstd', 'lz4', or 'none').
+            output: Output file path.
         """
         self._name = name
-        self._output = Path(output)
-        self._chunk_size = chunk_size
-        self._compression = compression
-
+        self._output = self._resolve_output(output_dir)
         self._writer: McapFileWriter | None = None
 
     def __enter__(self) -> Logger:
@@ -129,8 +127,6 @@ class Logger:
             self._output,
             mode="w",
             profile="ros2",
-            chunk_size=self._chunk_size,
-            chunk_compression=self._compression,  # type: ignore
         )
 
     def close(self) -> None:
@@ -139,15 +135,16 @@ class Logger:
             self._writer.close()
             self._writer = None
 
-    def _ensure_open(self) -> None:
-        """Ensure the logger is open."""
-        if self._writer is None:
-            raise RuntimeError("Logger is not open. Call open() or use as context manager.")
+    def _resolve_output(self, output_dir_override: str | Path | None) -> Path:
+        """Determines the output directory for the log file"""
+        if output_dir_override is not None:
+            return Path(output_dir_override)
+        if os.environ.get("TRACK_OUTPUT_DIR") is not None:
+            return Path(os.environ["TRACK_OUTPUT_DIR"])
+        return Path.home() / ".local" / "track" / "logs"
 
     def _get_caller_info(self) -> tuple[str, int]:
         """Get the file and line number of the caller."""
-        import inspect
-
         frame = inspect.currentframe()
         try:
             # Skip: _get_caller_info -> _log -> debug/info/etc -> actual caller
@@ -164,26 +161,15 @@ class Logger:
         self,
         level: LogLevel,
         message: str,
+        file: str,
+        line: int,
         *,
         timestamp_ns: int | None = None,
-        file: str = "",
-        line: int = 0,
     ) -> None:
         """Internal log method."""
-        self._ensure_open()
-        assert self._writer is not None
-
-        ts = timestamp_ns if timestamp_ns is not None else _time_ns()
-
-        log_msg = Log(
-            stamp=_ns_to_stamp(ts),
-            level=int(level),
-            name=self._name,
-            msg=message,
-            file=file,
-            line=line,
-        )
-
+        assert self._writer is not None, "Logger is not open. Call open() before using."
+        ts = _now_ns() if timestamp_ns is None else timestamp_ns
+        log_msg = Log(stamp=_ns_to_stamp(ts), level=int(level), name=self._name, msg=message, file=file, line=line)
         self._writer.write_message("/log", ts, log_msg)
 
     def debug(self, message: str, *, timestamp_ns: int | None = None) -> None:
@@ -236,53 +222,75 @@ class Logger:
         file, line = self._get_caller_info()
         self._log(LogLevel.FATAL, message, timestamp_ns=timestamp_ns, file=file, line=line)
 
+    def add_metadata(self, name: str, data: dict[str, str]) -> None:
+        """Add metadata.
+
+        Args:
+            name: Metadata name/category.
+            data: Key-value metadata pairs.
+        """
+        assert self._writer is not None, "Logger is not open. Call open() before using."
+        self._writer.write_metadata(name, data)
+
+    def add_attachment(
+        self,
+        name: str,
+        data: bytes,
+        media_type: str,
+        *,
+        timestamp_ns: int | None = None,
+    ) -> None:
+        """Add an attachment.
+
+        Attachments are useful for storing auxiliary data like model weights,
+        configuration files, or other binary data.
+
+        Args:
+            name: Attachment filename.
+            data: Attachment data.
+            media_type: MIME type of the attachment.
+            timestamp_ns: Optional timestamp in nanoseconds. Defaults to current time.
+        """
+        # TODO: Make media_type optional -> figure out how to detect it automatically
+        assert self._writer is not None, "Logger is not open. Call open() before using."
+        ts = timestamp_ns if timestamp_ns is not None else _now_ns()
+        self._writer.write_attachment(name, data, media_type=media_type, log_time=ts)
+
     def log_image(
         self,
-        topic: str,
+        name: str,
         image: bytes | np.ndarray,
         *,
         format: str = "png",
-        frame_id: str = "",
+        frame_id: str | None = None,
         timestamp_ns: int | None = None,
     ) -> None:
         """Log an image.
 
         Args:
-            topic: Topic name for the image (e.g., "camera/rgb").
+            name: Name for the image (e.g., "camera/rgb").
             image: Image data - either compressed bytes (PNG, JPEG, WebP) or
                    a numpy array (HxW for grayscale, HxWx3 for RGB, HxWx4 for RGBA).
             format: Image format ('png', 'jpeg', or 'webp'). Used when encoding arrays.
             frame_id: Frame of reference for the image.
             timestamp_ns: Optional timestamp in nanoseconds. Defaults to current time.
         """
-        self._ensure_open()
-        assert self._writer is not None
-
-        ts = timestamp_ns if timestamp_ns is not None else _time_ns()
-        channel_topic = f"/images/{topic}" if not topic.startswith("/") else topic
+        assert self._writer is not None, "Logger is not open. Call open() before using."
+        ts = timestamp_ns if timestamp_ns is not None else _now_ns()
+        channel_topic = f"/images/{name}" if not name.startswith("/") else name
 
         # Convert numpy array to bytes if needed
         if isinstance(image, np.ndarray):
             image = self._encode_image_array(image, format)
-
         msg = sensor_msgs.CompressedImage(
-            header=_make_header(ts, frame_id or topic),
+            header=_make_header(ts, frame_id or name),
             format=format,
             data=list(image),
         )
-
         self._writer.write_message(channel_topic, ts, msg)
 
     def _encode_image_array(self, array: np.ndarray, format: str) -> bytes:
         """Encode a numpy array to compressed image bytes."""
-        try:
-            from PIL import Image
-        except ImportError:
-            raise ImportError(
-                "PIL/Pillow is required for numpy array images. "
-                "Install with: pip install Pillow"
-            )
-
         # Determine PIL mode from array shape
         if array.ndim == 2:
             mode = "L"
@@ -346,10 +354,8 @@ class Logger:
             >>> points['b'] = np.random.randint(0, 255, 100)
             >>> logger.log_pointcloud("lidar", points)
         """
-        self._ensure_open()
-        assert self._writer is not None
-
-        ts = timestamp_ns if timestamp_ns is not None else _time_ns()
+        assert self._writer is not None, "Logger is not open. Call open() before using."
+        ts = timestamp_ns if timestamp_ns is not None else _now_ns()
         channel_topic = f"/pointclouds/{topic}" if not topic.startswith("/") else topic
 
         # Validate input
@@ -396,41 +402,4 @@ class Logger:
             data=list(data),
             is_dense=True,
         )
-
         self._writer.write_message(channel_topic, ts, msg)
-
-    def add_metadata(self, name: str, data: dict[str, str]) -> None:
-        """Add metadata to the MCAP file.
-
-        Args:
-            name: Metadata name/category.
-            data: Key-value metadata pairs.
-        """
-        self._ensure_open()
-        assert self._writer is not None
-        self._writer.write_metadata(name, data)
-
-    def add_attachment(
-        self,
-        name: str,
-        data: bytes,
-        *,
-        media_type: str = "application/octet-stream",
-        timestamp_ns: int | None = None,
-    ) -> None:
-        """Add an attachment to the MCAP file.
-
-        Attachments are useful for storing auxiliary data like model weights,
-        configuration files, or other binary data.
-
-        Args:
-            name: Attachment filename.
-            data: Attachment data.
-            media_type: MIME type of the attachment.
-            timestamp_ns: Optional timestamp in nanoseconds. Defaults to current time.
-        """
-        self._ensure_open()
-        assert self._writer is not None
-
-        ts = timestamp_ns if timestamp_ns is not None else _time_ns()
-        self._writer.write_attachment(name, data, media_type=media_type, log_time=ts)
