@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Example of async logging with multiple threads.
+"""Example of thread-safe logging with multiple threads.
 
-This example demonstrates how to use AsyncLogger with multiple threads.
-The AsyncLogger uses a background writer thread, so log calls return
-immediately without blocking.
+This example demonstrates sharing a single Logger across worker threads.
+Logger serializes writes internally with a lock.
 """
 
 import threading
@@ -11,7 +10,7 @@ import time
 
 import numpy as np
 
-from track import AsyncLogger
+from track import Logger
 
 
 def generate_pointcloud(n_points: int = 100) -> np.ndarray:
@@ -24,10 +23,9 @@ def generate_pointcloud(n_points: int = 100) -> np.ndarray:
     return points
 
 
-def worker(logger: AsyncLogger, worker_id: int, num_iterations: int) -> None:
+def worker(logger: Logger, worker_id: int, num_iterations: int) -> None:
     """Worker function that logs messages from a thread."""
     for i in range(num_iterations):
-        # Log calls return immediately (non-blocking)
         logger.info(f"Worker {worker_id}: iteration {i}")
 
         if i % 10 == 0:
@@ -56,8 +54,7 @@ def main():
 
     print(f"Starting {num_threads} threads, {iterations_per_thread} iterations each")
 
-    # AsyncLogger uses a background writer thread by default
-    with AsyncLogger(output_file, name="threaded") as logger:
+    with Logger(output_file, name="threaded") as logger:
         # Add experiment metadata
         logger.add_metadata(
             "experiment",
@@ -86,9 +83,6 @@ def main():
 
         elapsed = time.time() - start_time
         logger.info(f"All workers completed in {elapsed:.2f}s")
-
-        # Give background writer time to flush
-        time.sleep(0.5)
 
     print(f"Logged to: {output_file}")
     print(f"Elapsed time: {elapsed:.2f}s")
