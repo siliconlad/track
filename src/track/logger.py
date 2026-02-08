@@ -253,11 +253,11 @@ class Logger:
         # Default fallback in case nothing is specified
         return Path.home() / ".local" / "track" / "logs"
 
-    def open(self) -> None:
+    def open(self) -> 'Logger':
         """Open the logger for writing."""
         with self._lock:
             if self._is_open():
-                return
+                return self
 
             self._closed = False
             self._owner_pid = os.getpid()
@@ -266,6 +266,7 @@ class Logger:
             if not self._atexit_registered:
                 atexit.register(self.close)
                 self._atexit_registered = True
+        return self
 
     def _is_open(self) -> bool:
         """Check whether logger resources are initialized."""
