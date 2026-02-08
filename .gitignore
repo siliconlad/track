@@ -1,0 +1,9 @@
+# AI tools
+.agent
+.claude
+.codex
+
+# Python
+__pycache__
+.pytest_cache
+.venv
