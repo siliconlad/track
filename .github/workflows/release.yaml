@@ -49,8 +49,10 @@ jobs:
         run: |
           set -euo pipefail
           uv version --bump ${{ inputs.release_type }}
-          echo "version=$(uv version --short)" >> "$GITHUB_OUTPUT"
-          echo "tag=v$(uv version --short)" >> "$GITHUB_OUTPUT"
+          VERSION=$(uv version --short)
+          sed -i "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/track/__init__.py
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push version bump
         shell: bash
