@@ -8,7 +8,7 @@ import numpy as np
 
 from track.logger import Logger, LogLevel
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "Logger",
     "LogLevel",
