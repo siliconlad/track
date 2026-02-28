@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "track-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "ML experiment tracking library built on pybag-sdk"
 readme = "README.md"
 license = {text = "MIT"}
