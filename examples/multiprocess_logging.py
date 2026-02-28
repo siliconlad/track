@@ -54,13 +54,14 @@ def worker(logger: Logger, worker_id: int, num_iterations: int) -> None:
 
 def main():
     """Run the multi-process logging example."""
-    output_file = "multiprocess_experiment.mcap"
+    output_dir = "logs"
     num_processes = 4
     iterations_per_process = 30
 
     print(f"Starting {num_processes} processes, {iterations_per_process} iterations each")
 
-    with Logger(output_file, name="multiprocess", use_process=True) as logger:
+    with Logger("multiprocess", output_dir=output_dir, use_process=True) as logger:
+        output_path = logger.output_path
         # Add metadata
         logger.add_metadata(
             "experiment",
@@ -90,7 +91,7 @@ def main():
         elapsed = time.time() - start_time
         logger.info(f"All processes completed in {elapsed:.2f}s")
 
-    print(f"Logged to: {output_file}")
+    print(f"Logged to: {output_path}")
     print(f"Elapsed time: {elapsed:.2f}s")
 
 

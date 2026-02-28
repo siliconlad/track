@@ -4,12 +4,14 @@ An experiment tracking library built on top of [pybag](https://github.com/silico
 
 ## Minimal Logger Examples
 
+`output_dir` is a directory. The logger writes to `<output_dir>/<YYYYMMDD_HHMMSS_microseconds>_<logger-name>.mcap`.
+
 ### 1. Log messages
 
 ```python
 from track import Logger
 
-logger = Logger("demo", output_dir="run.mcap").open()
+logger = Logger("demo", output_dir="logs").open()
 logger.info("training started")
 logger.warning("learning rate is high")
 logger.close()
@@ -24,7 +26,7 @@ from track import Logger
 image = np.zeros((64, 64, 3), dtype=np.uint8)
 image[:, :, 1] = 255  # green
 
-logger = Logger("demo", output_dir="run.mcap").open()
+logger = Logger("demo", output_dir="logs").open()
 logger.log_image("camera/rgb", image, format="png")
 logger.close()
 ```
@@ -41,7 +43,7 @@ points["x"] = [0.0, 1.0, 0.0]
 points["y"] = [0.0, 0.0, 1.0]
 points["z"] = [0.0, 0.0, 0.0]
 
-logger = Logger("demo", output_dir="run.mcap").open()
+logger = Logger("demo", output_dir="logs").open()
 logger.log_pointcloud("lidar", points)
 logger.close()
 ```
@@ -51,7 +53,7 @@ logger.close()
 ```python
 from track import Logger
 
-logger = Logger("demo", output_dir="run.mcap").open()
+logger = Logger("demo", output_dir="logs").open()
 logger.add_metadata("experiment", {"name": "baseline", "epoch": "1"})
 logger.add_attachment(
     "config.json",

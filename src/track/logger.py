@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import atexit
+import datetime as dt
 import inspect
 import io
 import multiprocessing as mp
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -200,8 +202,12 @@ class Logger:
         """Initialize the logger.
 
         Args:
-            output: Output MCAP file path.
             name: Logger name (included in log messages).
+            output_dir: Directory where MCAP files should be written.
+                A timestamped file named `<datetime>_<logger-name>.mcap`
+                is created automatically.
+                For backwards compatibility, passing a `.mcap` path writes
+                directly to that file path.
             use_process: If True, enqueue writes and use a writer process.
         """
         self._name = name
@@ -245,13 +251,29 @@ class Logger:
         self._atexit_registered = False
 
     def _resolve_output(self, output_dir_override: str | Path | None) -> Path:
-        """Determines the output directory for the log file"""
+        """Determine the output file path for this logger instance."""
         if output_dir_override is not None:
-            return Path(output_dir_override)
-        if os.environ.get("TRACK_OUTPUT_DIR") is not None:
-            return Path(os.environ["TRACK_OUTPUT_DIR"])
-        # Default fallback in case nothing is specified
-        return Path.home() / ".local" / "track" / "logs"
+            output_target = Path(output_dir_override).expanduser()
+        elif os.environ.get("TRACK_OUTPUT_DIR") is not None:
+            output_target = Path(os.environ["TRACK_OUTPUT_DIR"]).expanduser()
+        else:
+            # Default fallback in case nothing is specified
+            output_target = Path.home() / ".local" / "track" / "logs"
+
+        # Backwards-compatible explicit file path behavior.
+        if output_target.suffix.lower() == ".mcap":
+            return output_target
+
+        timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", self._name).strip("._")
+        if not safe_name:
+            safe_name = "logger"
+        return output_target / f"{timestamp}_{safe_name}.mcap"
+
+    @property
+    def output_path(self) -> Path:
+        """Resolved output MCAP file path for this logger."""
+        return self._output
 
     def open(self) -> 'Logger':
         """Open the logger for writing."""
@@ -261,6 +283,7 @@ class Logger:
 
             self._closed = False
             self._owner_pid = os.getpid()
+            self._output.parent.mkdir(parents=True, exist_ok=True)
             self._open_writer()
 
             if not self._atexit_registered:
@@ -352,7 +375,7 @@ class Logger:
 
         if record_queue is not None:
             try:
-                record_queue.put(LogRecord(RecordType.CLOSE, 0, {}), timeout=5.0)
+                record_queue.put(LogRecord(RecordType.CLOSE, {}), timeout=5.0)
             except (queue.Full, Exception):
                 pass
 
@@ -369,12 +392,11 @@ class Logger:
             except Exception:
                 pass
 
-    def _get_caller_info(self) -> tuple[str, int]:
+    def _get_caller_info(self, stacklevel: int = 2) -> tuple[str, int]:
         """Get the file and line number of the caller."""
         frame = inspect.currentframe()
         try:
-            # Skip: _get_caller_info -> _log -> debug/info/etc -> actual caller
-            for _ in range(4):
+            for _ in range(stacklevel):
                 if frame is not None:
                     frame = frame.f_back
             if frame is not None:
@@ -445,29 +467,29 @@ class Logger:
         )
         self._writer.write_message("/log", timestamp_ns, log_msg)
 
-    def debug(self, message: str, *, timestamp_ns: int | None = None) -> None:
+    def debug(self, message: str, *, timestamp_ns: int | None = None, _stacklevel: int = 2) -> None:
         """Log a debug message."""
-        file, line = self._get_caller_info()
+        file, line = self._get_caller_info(_stacklevel)
         self._log(LogLevel.DEBUG, message, timestamp_ns=timestamp_ns, file=file, line=line)
 
-    def info(self, message: str, *, timestamp_ns: int | None = None) -> None:
+    def info(self, message: str, *, timestamp_ns: int | None = None, _stacklevel: int = 2) -> None:
         """Log an info message."""
-        file, line = self._get_caller_info()
+        file, line = self._get_caller_info(_stacklevel)
         self._log(LogLevel.INFO, message, timestamp_ns=timestamp_ns, file=file, line=line)
 
-    def warning(self, message: str, *, timestamp_ns: int | None = None) -> None:
+    def warning(self, message: str, *, timestamp_ns: int | None = None, _stacklevel: int = 2) -> None:
         """Log a warning message."""
-        file, line = self._get_caller_info()
+        file, line = self._get_caller_info(_stacklevel)
         self._log(LogLevel.WARNING, message, timestamp_ns=timestamp_ns, file=file, line=line)
 
-    def error(self, message: str, *, timestamp_ns: int | None = None) -> None:
+    def error(self, message: str, *, timestamp_ns: int | None = None, _stacklevel: int = 2) -> None:
         """Log an error message."""
-        file, line = self._get_caller_info()
+        file, line = self._get_caller_info(_stacklevel)
         self._log(LogLevel.ERROR, message, timestamp_ns=timestamp_ns, file=file, line=line)
 
-    def fatal(self, message: str, *, timestamp_ns: int | None = None) -> None:
+    def fatal(self, message: str, *, timestamp_ns: int | None = None, _stacklevel: int = 2) -> None:
         """Log a fatal message."""
-        file, line = self._get_caller_info()
+        file, line = self._get_caller_info(_stacklevel)
         self._log(LogLevel.FATAL, message, timestamp_ns=timestamp_ns, file=file, line=line)
 
     def add_metadata(self, name: str, data: dict[str, str]) -> None:

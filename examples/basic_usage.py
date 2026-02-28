@@ -57,9 +57,10 @@ def generate_sample_image(width: int = 256, height: int = 256) -> np.ndarray:
 
 def main():
     """Run the example."""
-    output_file = "example_experiment.mcap"
+    output_dir = "logs"
 
-    with Logger(output_file, name="example") as logger:
+    with Logger("example", output_dir=output_dir) as logger:
+        output_path = logger.output_path
         # Add experiment metadata
         logger.add_metadata(
             "experiment",
@@ -111,7 +112,7 @@ def main():
         # Log an error example
         logger.error("Example error message for demonstration")
 
-    print(f"Experiment logged to: {output_file}")
+    print(f"Experiment logged to: {output_path}")
     print("Open this file in Foxglove Studio to visualize the data.")
 
 
