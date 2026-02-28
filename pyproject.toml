@@ -3,7 +3,7 @@ requires = ["uv_build>=0.9.16,<0.10.0"]
 build-backend = "uv_build"
 
 [project]
-name = "track"
+name = "track-sdk"
 version = "0.1.0"
 description = "ML experiment tracking library built on pybag-sdk"
 readme = "README.md"
